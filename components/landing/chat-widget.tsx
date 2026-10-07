@@ -11,41 +11,60 @@ interface Message {
 }
 
 const quickQuestions = [
-  "Dịch vụ này gồm những gì?",
-  "Bao lâu thì có kết quả xét duyệt?",
-  "Chi phí dịch vụ là bao nhiêu?",
-  "Tôi cần chuẩn bị giấy tờ gì?",
+  "Visa du học Úc cần những giấy tờ gì?",
+  "Cần chứng minh tài chính bao nhiêu?",
+  "Yêu cầu tiếng Anh thế nào?",
+  "Sinh viên được đi làm bao nhiêu giờ?",
 ];
-
-const cannedAnswers: Record<string, string> = {
-  "Dịch vụ này gồm những gì?":
-    "Bên mình lo phần đối chiếu điểm chuẩn, kiểm tra hồ sơ và tư vấn chọn trường, chia làm 2 gói: Cơ bản và Toàn diện.",
-  "Bao lâu thì có kết quả xét duyệt?":
-    "Nộp đủ giấy tờ là có kết quả đối chiếu điểm chuẩn ngay. Sau đó tư vấn viên sẽ gọi xác nhận lại với bạn trong vòng 24h.",
-  "Chi phí dịch vụ là bao nhiêu?":
-    "Gói Cơ bản 18.000.000₫, gói Toàn diện 45.000.000₫ nhé. Bạn kéo lên phần báo giá phía trên để xem chi tiết quyền lợi từng gói.",
-  "Tôi cần chuẩn bị giấy tờ gì?":
-    "3 thứ thôi: bảng điểm (PDF), ảnh chứng chỉ IELTS, và ảnh CMND/CCCD hoặc hộ chiếu.",
-};
 
 const initialMessages: Message[] = [
-  { from: "bot", text: "Chào bạn! Mình là trợ lý ảo của DuHoc24, bạn cần hỗ trợ gì về hồ sơ du học?" },
+  {
+    from: "bot",
+    text: "Chào bạn! Mình là trợ lý tư vấn du học Úc của DuHoc24. Bạn cần hỏi gì về quy định tuyển sinh và visa du học Úc?",
+  },
 ];
+
+const ERROR_TEXT = "Xin lỗi, hiện mình chưa trả lời được. Bạn thử lại sau ít phút nhé.";
 
 export function ChatWidget() {
   const [open, setOpen] = React.useState(false);
   const [messages, setMessages] = React.useState<Message[]>(initialMessages);
   const [input, setInput] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const bottomRef = React.useRef<HTMLDivElement>(null);
 
-  function sendMessage(text: string) {
-    if (!text.trim()) return;
-    const answer = cannedAnswers[text];
-    setMessages((prev) => [
-      ...prev,
-      { from: "user", text },
-      ...(answer ? [{ from: "bot" as const, text: answer }] : []),
-    ]);
+  React.useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  async function sendMessage(text: string) {
+    const question = text.trim();
+    if (!question || loading) return;
+
+    const next: Message[] = [...messages, { from: "user", text: question }];
+    setMessages(next);
     setInput("");
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: next.map((m) => ({
+            role: m.from === "user" ? "user" : "model",
+            text: m.text,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || typeof data.reply !== "string") throw new Error(data.error);
+      setMessages((prev) => [...prev, { from: "bot", text: data.reply }]);
+    } catch {
+      setMessages((prev) => [...prev, { from: "bot", text: ERROR_TEXT }]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -54,8 +73,8 @@ export function ChatWidget() {
         <div className="mb-3 flex h-[28rem] w-80 flex-col overflow-hidden rounded-2xl border bg-card shadow-xl shadow-black/10 ring-1 ring-foreground/6.5 sm:w-96">
           <div className="flex items-center justify-between border-b bg-primary px-4 py-3 text-primary-foreground">
             <div>
-              <p className="text-sm font-medium">Hỏi đáp nhanh</p>
-              <p className="text-xs opacity-80">Thường trả lời trong vài phút</p>
+              <p className="text-sm font-medium">Tư vấn du học Úc</p>
+              <p className="text-xs opacity-80">Trả lời theo quy định tuyển sinh của Úc</p>
             </div>
             <button
               onClick={() => setOpen(false)}
@@ -74,7 +93,7 @@ export function ChatWidget() {
               >
                 <div
                   className={cn(
-                    "max-w-[85%] rounded-2xl px-3.5 py-2 text-sm",
+                    "max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm",
                     m.from === "user"
                       ? "rounded-br-sm bg-primary text-primary-foreground"
                       : "rounded-bl-sm bg-muted text-foreground",
@@ -84,6 +103,14 @@ export function ChatWidget() {
                 </div>
               </div>
             ))}
+            {loading && (
+              <div className="flex justify-start">
+                <div className="rounded-2xl rounded-bl-sm bg-muted px-3.5 py-2 text-sm text-muted-foreground">
+                  Đang trả lời...
+                </div>
+              </div>
+            )}
+            <div ref={bottomRef} />
           </div>
 
           <div className="border-t p-3">
@@ -91,8 +118,9 @@ export function ChatWidget() {
               {quickQuestions.map((q) => (
                 <button
                   key={q}
+                  disabled={loading}
                   onClick={() => sendMessage(q)}
-                  className="rounded-full border px-2.5 py-1 text-xs text-muted-foreground duration-150 hover:border-primary hover:text-primary"
+                  className="rounded-full border px-2.5 py-1 text-xs text-muted-foreground duration-150 hover:border-primary hover:text-primary disabled:opacity-50"
                 >
                   {q}
                 </button>
@@ -111,7 +139,7 @@ export function ChatWidget() {
                 placeholder="Nhập câu hỏi của bạn..."
                 className="h-9 flex-1 rounded-full border border-input bg-transparent px-3.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               />
-              <Button type="submit" size="icon" className="shrink-0" aria-label="Gửi">
+              <Button type="submit" size="icon" disabled={loading} className="shrink-0" aria-label="Gửi">
                 <Send className="size-4" />
               </Button>
             </form>

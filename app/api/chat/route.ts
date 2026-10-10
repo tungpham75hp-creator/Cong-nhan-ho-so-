@@ -1,73 +1,85 @@
-import { GoogleGenAI } from "@google/genai";
+import { cookies } from "next/headers";
 import { CHAT_MODEL, SYSTEM_INSTRUCTION } from "@/lib/chat";
+import { createGemini, generateWithRetry } from "@/lib/gemini";
+import {
+  addMessage,
+  conversationExists,
+  createConversation,
+  getRecentMessages,
+  isUuid,
+} from "@/lib/chat-store";
 
-const MAX_MESSAGES = 12;
+const MAX_CONTEXT_MESSAGES = 12; // số tin gần nhất gửi cho Gemini làm ngữ cảnh
+const MAX_HISTORY_MESSAGES = 200; // số tin tối đa trả về khi khách mở lại khung chat
 const MAX_CHARS = 1000;
-const MAX_ATTEMPTS = 3;
-const REQUEST_TIMEOUT_MS = 25_000;
 
-interface ChatTurn {
-  role: "user" | "model";
-  text: string;
+// Cookie chỉ chứa mã cuộc trò chuyện (UUID ngẫu nhiên), httpOnly nên JS trên trình duyệt không đọc được.
+// Toàn bộ nội dung nằm trong Supabase và chỉ server này đọc/ghi được.
+const COOKIE_NAME = "chat_cid";
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 90;
+
+async function currentConversationId(): Promise<string | null> {
+  const id = (await cookies()).get(COOKIE_NAME)?.value;
+  if (!isUuid(id)) return null;
+  return (await conversationExists(id)) ? id : null;
 }
 
-function parseHistory(body: unknown): ChatTurn[] | null {
-  const raw = (body as { messages?: unknown })?.messages;
-  if (!Array.isArray(raw) || raw.length === 0) return null;
+export async function GET() {
+  try {
+    const id = await currentConversationId();
+    if (!id) return Response.json({ messages: [] });
 
-  const turns: ChatTurn[] = [];
-  for (const m of raw.slice(-MAX_MESSAGES)) {
-    const role = m?.role;
-    const text = typeof m?.text === "string" ? m.text.trim().slice(0, MAX_CHARS) : "";
-    if ((role !== "user" && role !== "model") || !text) return null;
-    turns.push({ role, text });
+    const messages = await getRecentMessages(id, MAX_HISTORY_MESSAGES);
+    return Response.json({ messages });
+  } catch (err) {
+    console.error("Load chat history error:", err);
+    return Response.json({ error: "Không tải được lịch sử trò chuyện." }, { status: 500 });
   }
-
-  // Gemini yêu cầu hội thoại bắt đầu bằng lượt của user và kết thúc bằng user.
-  while (turns.length && turns[0].role !== "user") turns.shift();
-  if (turns.length === 0 || turns[turns.length - 1].role !== "user") return null;
-  return turns;
 }
 
 export async function POST(request: Request) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return Response.json({ error: "Chatbot chưa được cấu hình." }, { status: 500 });
-  }
-
-  const turns = parseHistory(await request.json().catch(() => null));
-  if (!turns) {
-    return Response.json({ error: "Tin nhắn không hợp lệ." }, { status: 400 });
+  const body = await request.json().catch(() => null);
+  const text = typeof body?.text === "string" ? body.text.trim() : "";
+  if (!text || text.length > MAX_CHARS) {
+    return Response.json(
+      { error: `Tin nhắn cần có từ 1 đến ${MAX_CHARS} ký tự.` },
+      { status: 400 },
+    );
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: REQUEST_TIMEOUT_MS } });
-    const request = {
-      model: CHAT_MODEL,
-      contents: turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
-      config: { systemInstruction: SYSTEM_INSTRUCTION, temperature: 0.2 },
-    };
-
-    // Model đôi khi trả 503/429 do quá tải tạm thời, thử lại vài lần trước khi báo lỗi.
-    let response;
-    for (let attempt = 1; ; attempt++) {
-      try {
-        response = await ai.models.generateContent(request);
-        break;
-      } catch (err) {
-        const status = (err as { status?: number }).status;
-        if (attempt >= MAX_ATTEMPTS || (status !== 503 && status !== 429)) throw err;
-        await new Promise((r) => setTimeout(r, 1000 * attempt));
-      }
+    let conversationId = await currentConversationId();
+    if (!conversationId) {
+      conversationId = await createConversation();
+      (await cookies()).set(COOKIE_NAME, conversationId, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        maxAge: COOKIE_MAX_AGE,
+      });
     }
 
-    const text = response.text?.trim();
-    if (!text) {
+    // Lưu câu hỏi của khách trước, rồi đọc ngữ cảnh từ chính database.
+    await addMessage(conversationId, "user", text);
+    const context = await getRecentMessages(conversationId, MAX_CONTEXT_MESSAGES);
+    while (context.length && context[0].role !== "user") context.shift();
+
+    const response = await generateWithRetry(createGemini(), {
+      model: CHAT_MODEL,
+      contents: context.map((m) => ({ role: m.role, parts: [{ text: m.content }] })),
+      config: { systemInstruction: SYSTEM_INSTRUCTION, temperature: 0.2 },
+    });
+
+    const reply = response.text?.trim();
+    if (!reply) {
       return Response.json({ error: "Không nhận được phản hồi." }, { status: 502 });
     }
-    return Response.json({ reply: text });
+
+    await addMessage(conversationId, "model", reply);
+    return Response.json({ reply });
   } catch (err) {
-    console.error("Gemini error:", err);
+    console.error("Chat error:", err);
     return Response.json({ error: "Có lỗi khi gọi trợ lý." }, { status: 502 });
   }
 }

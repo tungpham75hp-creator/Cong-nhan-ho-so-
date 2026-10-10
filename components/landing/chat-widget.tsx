@@ -32,17 +32,41 @@ export function ChatWidget() {
   const [input, setInput] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const bottomRef = React.useRef<HTMLDivElement>(null);
+  const historyRequested = React.useRef(false);
 
   React.useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  // Lịch sử trò chuyện nằm trong database (server nhận diện khách qua cookie httpOnly),
+  // nên mỗi lần mở khung chat đầu tiên ta tải lại từ server thay vì giữ trong trình duyệt.
+  React.useEffect(() => {
+    if (!open || historyRequested.current) return;
+    historyRequested.current = true;
+
+    fetch("/api/chat")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { messages?: { role: "user" | "model"; content: string }[] } | null) => {
+        const saved = data?.messages ?? [];
+        if (saved.length === 0) return;
+        setMessages((prev) => [
+          ...initialMessages,
+          ...saved.map((m) => ({
+            from: m.role === "user" ? ("user" as const) : ("bot" as const),
+            text: m.content,
+          })),
+          // giữ lại tin khách vừa gõ nếu họ gửi trước khi lịch sử tải xong
+          ...prev.slice(initialMessages.length).filter((p) => !saved.some((s) => s.content === p.text)),
+        ]);
+      })
+      .catch(() => {});
+  }, [open]);
+
   async function sendMessage(text: string) {
     const question = text.trim();
     if (!question || loading) return;
 
-    const next: Message[] = [...messages, { from: "user", text: question }];
-    setMessages(next);
+    setMessages((prev) => [...prev, { from: "user", text: question }]);
     setInput("");
     setLoading(true);
 
@@ -50,12 +74,7 @@ export function ChatWidget() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: next.map((m) => ({
-            role: m.from === "user" ? "user" : "model",
-            text: m.text,
-          })),
-        }),
+        body: JSON.stringify({ text: question }),
       });
       const data = await res.json();
       if (!res.ok || typeof data.reply !== "string") throw new Error(data.error);
@@ -136,6 +155,7 @@ export function ChatWidget() {
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                maxLength={1000}
                 placeholder="Nhập câu hỏi của bạn..."
                 className="h-9 flex-1 rounded-full border border-input bg-transparent px-3.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               />

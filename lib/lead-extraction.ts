@@ -2,7 +2,7 @@ import "server-only";
 import { createGemini, generateWithRetry } from "@/lib/gemini";
 import type { StoredMessage } from "@/lib/chat-store";
 
-export const LEAD_MODEL = process.env.GEMINI_LEAD_MODEL || "gemini-3.1-flash-lite";
+export const LEAD_MODEL = process.env.GEMINI_LEAD_MODEL || "gemini-3.5-flash-lite";
 
 export const LEAD_QUALITIES = ["good", "ok", "spam"] as const;
 export type LeadQuality = (typeof LEAD_QUALITIES)[number];

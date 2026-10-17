@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { AdminPageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
@@ -10,9 +11,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { schools } from "@/lib/mock-data";
+import { listSchools } from "@/lib/school-store";
 
-export default function AdminSchoolsPage() {
+export default async function AdminSchoolsPage() {
+  await connection(); // luôn đọc dữ liệu mới từ database, không prerender lúc build
+  const schools = await listSchools();
+
   return (
     <>
       <AdminPageHeader
@@ -38,6 +42,13 @@ export default function AdminSchoolsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
+            {schools.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                  Chưa có trường nào.
+                </TableCell>
+              </TableRow>
+            )}
             {schools.map((school) => (
               <TableRow key={school.id}>
                 <TableCell className="font-medium">{school.name}</TableCell>

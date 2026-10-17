@@ -4,10 +4,10 @@ import { GoogleGenAI, type GenerateContentParameters } from "@google/genai";
 const MAX_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 25_000;
 
-export function createGemini(): GoogleGenAI {
+export function createGemini(timeoutMs = REQUEST_TIMEOUT_MS): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("Thiếu GEMINI_API_KEY trong .env");
-  return new GoogleGenAI({ apiKey, httpOptions: { timeout: REQUEST_TIMEOUT_MS } });
+  return new GoogleGenAI({ apiKey, httpOptions: { timeout: timeoutMs } });
 }
 
 /** Model đôi khi trả 503/429 do quá tải tạm thời, thử lại vài lần trước khi báo lỗi. */

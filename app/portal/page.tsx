@@ -1,16 +1,26 @@
-import { cookies } from "next/headers";
 import { LogOut } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
 import { DocumentFeatures } from "@/components/portal/document-features";
 import { ExtractedInfo } from "@/components/portal/extracted-info";
-import { isUuid } from "@/lib/chat-store";
-import { PROFILE_COOKIE_NAME, getDocuments, type StudentDocuments } from "@/lib/student-store";
+import { SchoolMatch } from "@/components/portal/school-match";
+import { ScholarshipSuggestions } from "@/components/portal/scholarship-suggestions";
+import { checkProfile, compareWithSchools, studentScores } from "@/lib/school-matching";
+import { listSchools } from "@/lib/school-store";
+import { getCurrentStudentDocuments } from "@/lib/student-store";
 
 export default async function PortalPage() {
-  const profileId = (await cookies()).get(PROFILE_COOKIE_NAME)?.value;
-  const documents: StudentDocuments = isUuid(profileId) ? await getDocuments(profileId) : {};
+  const [documents, schools] = await Promise.all([getCurrentStudentDocuments(), listSchools()]);
   const { transcript, ielts, identity } = documents;
+
+  // Chỉ đối chiếu điểm chuẩn khi hồ sơ đầy đủ và hợp lệ; so sánh bằng phép tính số, không dùng AI.
+  const docs = {
+    transcript: transcript?.data ?? null,
+    ielts: ielts?.data ?? null,
+    identity: identity?.data ?? null,
+  };
+  const check = checkProfile(docs);
+  const results = check.ready ? compareWithSchools(schools, studentScores(docs)) : null;
 
   const studentName = identity?.data.fullName ?? transcript?.data.fullName ?? ielts?.data.fullName;
 
@@ -74,6 +84,12 @@ export default async function PortalPage() {
             ielts={ielts?.data ?? null}
             identity={identity?.data ?? null}
           />
+          <SchoolMatch results={results} issues={check.issues} />
+          {results && (
+            <ScholarshipSuggestions
+              passedCount={results.filter((r) => r.verdict === "pass").length}
+            />
+          )}
         </section>
       </main>
     </>

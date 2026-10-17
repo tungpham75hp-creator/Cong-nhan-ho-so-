@@ -1,4 +1,6 @@
 import "server-only";
+import { cookies } from "next/headers";
+import { isUuid } from "@/lib/chat-store";
 import { getSupabaseAdmin } from "@/lib/supabase-server";
 import type { DocData, DocType } from "@/lib/document-extraction";
 
@@ -79,4 +81,10 @@ export async function getDocuments(profileId: string): Promise<StudentDocuments>
     };
   }
   return result;
+}
+
+/** Giấy tờ của học viên đang xem trang (nhận diện qua cookie hồ sơ); rỗng nếu chưa nộp gì. */
+export async function getCurrentStudentDocuments(): Promise<StudentDocuments> {
+  const profileId = (await cookies()).get(PROFILE_COOKIE_NAME)?.value;
+  return isUuid(profileId) ? getDocuments(profileId) : {};
 }

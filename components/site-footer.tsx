@@ -51,6 +51,11 @@ export function SiteFooter() {
                   Cổng hồ sơ
                 </Link>
               </li>
+              <li>
+                <Link href="/privacy" className="text-muted-foreground duration-150 hover:text-primary">
+                  Chính sách quyền riêng tư
+                </Link>
+              </li>
             </ul>
           </div>
         </div>
